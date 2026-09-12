@@ -269,21 +269,21 @@
     }
 
     function checkOpen() {
-      if (!config.activo) { console.log('checkOpen: inactivo'); return false; }
+      if (!config.activo) return false;
       const now = new Date();
       const colombiaTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Bogota' }));
       const dayOfWeek = colombiaTime.getDay();
       const diaHoy = DIAS_MAP[dayOfWeek];
-      console.log('checkOpen:', { diaHoy, dias_activos: config.dias_activos, includes: config.dias_activos?.includes(diaHoy) });
-      if (!config.dias_activos?.includes(diaHoy)) { console.log('checkOpen: dia no incluido'); return false; }
+      if (!config.dias_activos?.includes(diaHoy)) return false;
       const totalMin = colombiaTime.getHours() * 60 + colombiaTime.getMinutes();
       const inicio = timeToMinutes(config.hora_inicio);
       const fin = timeToMinutes(config.hora_fin);
-      console.log('checkOpen:', { totalMin, inicio, fin,HoraActual: `${colombiaTime.getHours()}:${colombiaTime.getMinutes()}` });
 
       if (inicio > fin) {
         return totalMin >= inicio || totalMin <= fin;
       }
+      return totalMin >= inicio && totalMin <= fin;
+    }
       const isOpen = totalMin >= inicio && totalMin <= fin;
       console.log('checkOpen: resultado =', isOpen);
       return isOpen;
@@ -475,7 +475,7 @@
 
       localStorage.setItem(STORAGE_KEY, codigo_id);
       const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
-      const carreraNombre = document.getElementById('carrera').selectedOptions[0]?.text || ''; showSuccess(result.confirmacion_id, codigo_id, nombre, carreraNombre, fecha);
+      showSuccess(result.confirmacion_id, codigo_id, nombre, '', fecha);
       resetBtn();
     });
 
