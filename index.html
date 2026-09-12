@@ -250,29 +250,43 @@
     const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
     const TIPO_COMIDA_ID = 2;
     const TIPO = 'almuerzo';
+    const STORAGE_KEY = 'almuerzo_confirmacion_hoy';
 
-    let config = { activo: true, hora_inicio: '05:00', hora_fin: '10:08' };
+    let config = { activo: true, hora_inicio: '05:00', hora_fin: '23:59', dias_activos: ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'] };
+
+    const DIAS_MAP = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
 
     function timeToMinutes(timeStr) {
       const [h, m] = timeStr.split(':').map(Number);
       return h * 60 + m;
     }
 
+    function getTodayPattern() {
+      const now = new Date();
+      const colombiaTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+      const pad = n => String(n).padStart(2, '0');
+      return `${pad(colombiaTime.getDate())}/${pad(colombiaTime.getMonth()+1)}/${colombiaTime.getFullYear()}%`;
+    }
+
     function checkOpen() {
-      if (!config.activo) return false;
+      if (!config.activo) { console.log('checkOpen: inactivo'); return false; }
       const now = new Date();
       const colombiaTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Bogota' }));
       const dayOfWeek = colombiaTime.getDay();
-      if (dayOfWeek === 0 || dayOfWeek === 6) return false;
+      const diaHoy = DIAS_MAP[dayOfWeek];
+      console.log('checkOpen:', { diaHoy, dias_activos: config.dias_activos, includes: config.dias_activos?.includes(diaHoy) });
+      if (!config.dias_activos?.includes(diaHoy)) { console.log('checkOpen: dia no incluido'); return false; }
       const totalMin = colombiaTime.getHours() * 60 + colombiaTime.getMinutes();
       const inicio = timeToMinutes(config.hora_inicio);
       const fin = timeToMinutes(config.hora_fin);
+      console.log('checkOpen:', { totalMin, inicio, fin,HoraActual: `${colombiaTime.getHours()}:${colombiaTime.getMinutes()}` });
 
-      // Handle crossing midnight (e.g. 19:41 to 10:08)
       if (inicio > fin) {
         return totalMin >= inicio || totalMin <= fin;
       }
-      return totalMin >= inicio && totalMin <= fin;
+      const isOpen = totalMin >= inicio && totalMin <= fin;
+      console.log('checkOpen: resultado =', isOpen);
+      return isOpen;
     }
 
     async function loadConfig() {
@@ -292,11 +306,59 @@
         msg.classList.remove('hidden');
         const msgText = !config.activo
           ? 'Este formulario ha sido cerrado por el administrador.'
-          : 'Este formulario solo funciona de lunes a viernes';
+          : 'Este formulario solo funciona de <strong>lunes a viernes</strong>';
         document.getElementById('closedTimeMsg').innerHTML = msgText;
         document.getElementById('closedSchedule').textContent = `${config.hora_inicio} - ${config.hora_fin}`;
       }
     }
+
+    // ============================================
+    // DUPLICATE CHECK + SHOW CONFIRMATION ON RELOAD
+    // ============================================
+    async function checkExistingConfirmation() {
+      const savedCodigo = localStorage.getItem(STORAGE_KEY);
+      if (!savedCodigo) return false;
+
+      const { data } = await db.from('confirmaciones')
+        .select('*')
+        .eq('codigo_id', savedCodigo)
+        .like('fecha', getTodayPattern())
+        .eq('tipo_comida_id', TIPO_COMIDA_ID)
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (data) {
+        const fecha = data.fecha || new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
+        showSuccess(data.id, data.codigo_id, data.nombre_en_form || data.beneficiario_nombre || '', data.carrera_en_form || data.carrera_nombre || '', fecha);
+        return true;
+      }
+
+      localStorage.removeItem(STORAGE_KEY);
+      return false;
+    }
+
+    async function checkDuplicateBeforeSubmit(codigoId) {
+      const { data } = await db.from('confirmaciones')
+        .select('id, nombre_en_form, beneficiario_nombre, carrera_en_form, carrera_nombre, fecha')
+        .eq('codigo_id', codigoId)
+        .like('fecha', getTodayPattern())
+        .eq('tipo_comida_id', TIPO_COMIDA_ID)
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      return data;
+    }
+
+    // On page load: check if user already confirmed today
+    (async () => {
+      await loadConfig();
+      const alreadyConfirmed = await checkExistingConfirmation();
+      if (!alreadyConfirmed) {
+        checkTime();
+      }
+    })();
 
     async function loadCarreras() {
       const { data: servicios } = await db.from('carrera_servicio').select('carrera_id').eq('servicio_id', 2).eq('activo', true);
@@ -341,7 +403,7 @@
     document.getElementById('confirmForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       if (!checkOpen()) {
-        showError(!config.activo ? 'El formulario ha sido cerrado por el administrador.' : 'El formulario de almuerzo esta cerrado fuera de horario.');
+        checkTime();
         return;
       }
       const btn = document.getElementById('submitBtn');
@@ -354,6 +416,16 @@
 
       if (!carrera_id || !codigo_id || !nombre) {
         showError('Todos los campos son obligatorios');
+        resetBtn();
+        return;
+      }
+
+      // CHECK DUPLICATE BEFORE SUBMIT
+      const existing = await checkDuplicateBeforeSubmit(codigo_id);
+      if (existing) {
+        localStorage.setItem(STORAGE_KEY, codigo_id);
+        const fecha = existing.fecha || new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
+        showSuccess(existing.id, codigo_id, existing.nombre_en_form || existing.beneficiario_nombre || nombre, existing.carrera_en_form || existing.carrera_nombre || '', fecha);
         resetBtn();
         return;
       }
@@ -375,6 +447,14 @@
 
       const result = data?.[0];
 
+      if (result?.motivo_alerta === 'duplicado') {
+        localStorage.setItem(STORAGE_KEY, codigo_id);
+        const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
+        showSuccess(result.confirmacion_id, codigo_id, nombre, '', fecha);
+        resetBtn();
+        return;
+      }
+
       if (result?.motivo_alerta === 'no_en_padron') {
         showError('Su codigo no fue encontrado en el padron de beneficiarios. Verifique que digito correctamente su ID.');
         resetBtn();
@@ -393,6 +473,7 @@
         return;
       }
 
+      localStorage.setItem(STORAGE_KEY, codigo_id);
       const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
       const carreraNombre = document.getElementById('carrera').selectedOptions[0]?.text || ''; showSuccess(result.confirmacion_id, codigo_id, nombre, carreraNombre, fecha);
       resetBtn();
@@ -418,6 +499,7 @@
 
     function showSuccess(id, codigo, nombre, carrera, fecha) {
       document.getElementById('form-container').classList.add('hidden');
+      document.getElementById('closedMsg').classList.add('hidden');
       document.getElementById('success-container').classList.remove('hidden');
       document.getElementById('confirmCode').textContent = `${String(id).padStart(4, '0')}`;
       document.getElementById('confirmNombre').textContent = nombre;
@@ -430,10 +512,12 @@
       document.getElementById('form-container').classList.remove('hidden');
       document.getElementById('success-container').classList.add('hidden');
       document.getElementById('confirmForm').reset();
+      checkTime();
     }
 
     function showVerify() {
       document.getElementById('form-container').classList.add('hidden');
+      document.getElementById('closedMsg').classList.add('hidden');
       document.getElementById('success-container').classList.add('hidden');
       document.getElementById('verify-container').classList.remove('hidden');
     }
@@ -443,12 +527,14 @@
       document.getElementById('form-container').classList.remove('hidden');
       document.getElementById('verifyInput').value = '';
       document.getElementById('verifyError').classList.add('hidden');
+      checkTime();
     }
 
     function hideVerifyResult() {
       document.getElementById('verify-valid').classList.add('hidden');
       document.getElementById('verify-invalid').classList.add('hidden');
       document.getElementById('form-container').classList.remove('hidden');
+      checkTime();
     }
 
     document.getElementById('verifyForm').addEventListener('submit', async (e) => {
@@ -494,7 +580,6 @@
       document.getElementById('vrFecha').textContent = data.fecha || '';
     });
 
-    loadConfig();
     loadCarreras();
   </script>
 </body>
