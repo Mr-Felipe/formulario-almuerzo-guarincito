@@ -250,7 +250,6 @@
     const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
     const TIPO_COMIDA_ID = 2;
     const TIPO = 'almuerzo';
-    const STORAGE_KEY = 'almuerzo_confirmacion_hoy';
 
     let config = { activo: true, hora_inicio: '05:00', hora_fin: '23:59', dias_activos: ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'] };
 
@@ -311,32 +310,9 @@
     // ============================================
     // DUPLICATE CHECK + SHOW CONFIRMATION ON RELOAD
     // ============================================
-    async function checkExistingConfirmation() {
-      const savedCodigo = localStorage.getItem(STORAGE_KEY);
-      if (!savedCodigo) return false;
-
+    async function checkExistingConfirmation(codigoId) {
       const { data } = await db.from('confirmaciones')
         .select('*')
-        .eq('codigo_id', savedCodigo)
-        .like('fecha', getTodayPattern())
-        .eq('tipo_comida_id', TIPO_COMIDA_ID)
-        .order('id', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (data) {
-        const fecha = data.fecha || new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
-        showSuccess(data.id, data.codigo_id, data.nombre_en_form || '', data.carrera_en_form || '', fecha);
-        return true;
-      }
-
-      localStorage.removeItem(STORAGE_KEY);
-      return false;
-    }
-
-    async function checkDuplicateBeforeSubmit(codigoId) {
-      const { data } = await db.from('confirmaciones')
-        .select('id, nombre_en_form, carrera_en_form, fecha')
         .eq('codigo_id', codigoId)
         .like('fecha', getTodayPattern())
         .eq('tipo_comida_id', TIPO_COMIDA_ID)
@@ -347,13 +323,9 @@
       return data;
     }
 
-    // On page load: check if user already confirmed today
+    // On page load: load config and check if form is open
     (async () => {
       await loadConfig();
-      const alreadyConfirmed = await checkExistingConfirmation();
-      if (!alreadyConfirmed) {
-        checkTime();
-      }
     })();
 
     async function loadCarreras() {
@@ -417,9 +389,8 @@
       }
 
       // CHECK DUPLICATE BEFORE SUBMIT
-      const existing = await checkDuplicateBeforeSubmit(codigo_id);
+      const existing = await checkExistingConfirmation(codigo_id);
       if (existing) {
-        localStorage.setItem(STORAGE_KEY, codigo_id);
         const fecha = existing.fecha || new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
         showSuccess(existing.id, codigo_id, existing.nombre_en_form || nombre, existing.carrera_en_form || '', fecha);
         resetBtn();
@@ -444,7 +415,6 @@
       const result = data?.[0];
 
       if (result?.motivo_alerta === 'duplicado') {
-        localStorage.setItem(STORAGE_KEY, codigo_id);
         const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
         showSuccess(result.confirmacion_id, codigo_id, nombre, '', fecha);
         resetBtn();
@@ -469,7 +439,6 @@
         return;
       }
 
-      localStorage.setItem(STORAGE_KEY, codigo_id);
       const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
       showSuccess(result.confirmacion_id, codigo_id, nombre, '', fecha);
       resetBtn();
