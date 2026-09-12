@@ -284,10 +284,6 @@
       }
       return totalMin >= inicio && totalMin <= fin;
     }
-      const isOpen = totalMin >= inicio && totalMin <= fin;
-      console.log('checkOpen: resultado =', isOpen);
-      return isOpen;
-    }
 
     async function loadConfig() {
       const { data } = await db.from('form_config').select('*').eq('tipo', TIPO).single();
